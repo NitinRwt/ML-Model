@@ -1,62 +1,99 @@
-from fastapi import FastAPI, HTTPException
-import os
-from ultralytics import YOLO
-import cv2
-import easyocr
-import numpy as np
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.responses import JSONResponse
+import os
+import cv2
+import numpy as np
+from ultralytics import YOLO
+import easyocr
+from typing import Dict, Any
 
 app = FastAPI()
 
-# Load the YOLO model once during startup
-model_path = "best.pt"
-model = YOLO(model_path)
+# Initialize models
+model = YOLO("Models/model_1_0_2.pt")
 reader = easyocr.Reader(["en"])
 
-def detect_and_recognize(image_path: str):
-    # Check if the file exists
-    if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail="Image file not found")
+def calculate_combined_confidence(yolo_confs: list, ocr_confs: list) -> float:
+    """Calculate weighted confidence score from YOLO and OCR results"""
+    if not yolo_confs and not ocr_confs:
+        return 0.0
+        
+    yolo_avg = sum(yolo_confs) / len(yolo_confs) if yolo_confs else 0.0
+    ocr_avg = sum(ocr_confs) / len(ocr_confs) if ocr_confs else 0.0
+    
+    # Weighted average (adjust weights as needed)
+    return round((yolo_avg * 0.5 + ocr_avg * 0.5) * 100, 1)
 
-    # Load the image
-    image = cv2.imread(image_path)
+def detect_and_recognize(image_path: str) -> Dict[str, Dict[str, Any]]:
+    results = model.predict(source=image_path, conf=0.15, save=False)
+    output = {}
 
-    # Perform inference
-    results = model.predict(source=image, save=False, conf=0.15)
-
-    # Dictionary to store final results
-    output = {"TimeLeft": None, "kV": None}
-
-    # Process results
     for result in results:
-        for box in result.boxes.xyxy:
-            x_min, y_min, x_max, y_max = map(int, box)
-            cropped_region = image[y_min:y_max, x_min:x_max]
+        for box in result.boxes:
+            # Extract detection info
+            x_min, y_min, x_max, y_max = map(int, box.xyxy[0])
+            class_id = int(box.cls)
+            class_name = result.names[class_id]
+            yolo_conf = box.conf.item()
 
-            # OCR on the cropped region
-            ocr_results = reader.readtext(cropped_region)
+            # Process image region
+            image = cv2.imread(image_path)
+            cropped = image[y_min:y_max, x_min:x_max]
+            
+            # OCR processing
+            ocr_results = reader.readtext(cropped)
+            ocr_texts = []
+            ocr_confs = []
 
-            # Check each detected text
-            for ocr_result in ocr_results:
-                text = ocr_result[1]  # Extract the detected text
+            for detection in ocr_results:
+                _, text, conf = detection
+                ocr_texts.append(text)
+                ocr_confs.append(conf)
 
-                # Match and assign the text to keys
-                if "TimeLeft" in text or ":" in text:
-                    output["TimeLeft"] = text
-                elif "kV" in text or text.replace(".", "", 1).isdigit():
-                    output["kV"] = text
+            # Update output structure
+            if class_name not in output:
+                output[class_name] = {
+                    "yolo_confs": [],
+                    "ocr_confs": [],
+                    "ocr_texts": []
+                }
 
-    return output
+            output[class_name]["yolo_confs"].append(yolo_conf)
+            output[class_name]["ocr_confs"].extend(ocr_confs)
+            output[class_name]["ocr_texts"].extend(ocr_texts)
 
-@app.get("/detect/")
-async def detect_image(image_path: str):
+    # Format final response
+    final_result = {}
+    for class_name, data in output.items():
+        final_result[class_name] = {
+            "text": " ".join(data["ocr_texts"]) if data["ocr_texts"] else "",
+            "conf": calculate_combined_confidence(
+                data["yolo_confs"],
+                data["ocr_confs"]
+            )
+        }
+    
+    return final_result
+
+@app.post("/detect/")
+async def detect_image(file: UploadFile = File(...)):
     try:
-        # Process the image and get results
-        result = detect_and_recognize(image_path)
+        # Save temporary file
+        image_path = f"temp_{file.filename}"
+        with open(image_path, "wb") as f:
+            f.write(await file.read())
 
-        # Return the results as JSON response
+        # Process image
+        result = detect_and_recognize(image_path)
+        
+        # Cleanup
+        os.remove(image_path)
+        
         return JSONResponse(content=result)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/")
+def health_check():
+    return {"status": "healthy", "version": "1.0.2"}
