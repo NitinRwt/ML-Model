@@ -1,5 +1,5 @@
 train: dataset/train/images
-val: dataset/val/images
+val: dataset/train/images
 
-nc: 1 
-names: ['meter'] 
+nc: 7 
+names: ['kv', 'TimeLeft', 'Volt', 'qcValue', 'qValue', 'res','temp'] 
