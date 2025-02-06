@@ -1,28 +1,17 @@
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 import os
 import cv2
 import numpy as np
 from ultralytics import YOLO
 import easyocr
-from typing import Dict, Any
+from typing import Dict, Any, Set
 
 app = FastAPI()
 
 # Initialize models
 model = YOLO("Models/model_1_0_2.pt")
 reader = easyocr.Reader(["en"])
-
-def calculate_combined_confidence(yolo_confs: list, ocr_confs: list) -> float:
-    """Calculate weighted confidence score from YOLO and OCR results"""
-    if not yolo_confs and not ocr_confs:
-        return 0.0
-        
-    yolo_avg = sum(yolo_confs) / len(yolo_confs) if yolo_confs else 0.0
-    ocr_avg = sum(ocr_confs) / len(ocr_confs) if ocr_confs else 0.0
-    
-    # Weighted average (adjust weights as needed)
-    return round((yolo_avg * 0.5 + ocr_avg * 0.5) * 100, 1)
 
 def detect_and_recognize(image_path: str) -> Dict[str, Dict[str, Any]]:
     results = model.predict(source=image_path, conf=0.15, save=False)
@@ -33,7 +22,7 @@ def detect_and_recognize(image_path: str) -> Dict[str, Dict[str, Any]]:
             # Extract detection info
             x_min, y_min, x_max, y_max = map(int, box.xyxy[0])
             class_id = int(box.cls)
-            class_name = result.names[class_id]
+            class_name = results.names[class_id]  
             yolo_conf = box.conf.item()
 
             # Process image region
@@ -62,38 +51,40 @@ def detect_and_recognize(image_path: str) -> Dict[str, Dict[str, Any]]:
             output[class_name]["ocr_confs"].extend(ocr_confs)
             output[class_name]["ocr_texts"].extend(ocr_texts)
 
-    # Format final response
-    final_result = {}
-    for class_name, data in output.items():
-        final_result[class_name] = {
-            "text": " ".join(data["ocr_texts"]) if data["ocr_texts"] else "",
-            "conf": calculate_combined_confidence(
-                data["yolo_confs"],
-                data["ocr_confs"]
-            )
-        }
-    
-    return final_result
+    return output
 
-@app.post("/detect/")
-async def detect_image(file: UploadFile = File(...)):
+@app.post("/test/")
+async def test(file: UploadFile = File(...)):
     try:
-        # Save temporary file
+        # Save uploaded image temporarily
         image_path = f"temp_{file.filename}"
         with open(image_path, "wb") as f:
             f.write(await file.read())
 
         # Process image
-        result = detect_and_recognize(image_path)
-        
-        # Cleanup
+        detected_data = detect_and_recognize(image_path)
+        extracted_classes: Set[str] = set(detected_data.keys())
+
+        # Cleanup temp file
         os.remove(image_path)
-        
-        return JSONResponse(content=result)
+
+        # Prepare detailed results
+        detailed_results = {}
+        for class_name, data in detected_data.items():
+            combined_conf = sum(data["ocr_confs"]) / len(data["ocr_confs"]) if data["ocr_confs"] else 0
+            detailed_results[class_name] = {
+                "ocr_texts": data["ocr_texts"],
+                "combined_conf": combined_conf
+            }
+
+        return JSONResponse(content={
+            "extracted_classes": list(extracted_classes),
+            "detailed_results": detailed_results
+        })
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 def health_check():
-    return {"status": "healthy", "version": "1.0.2"}
+    return {"status": "healthy", "version": "1.0.3"}
