@@ -22,7 +22,7 @@ def detect_and_recognize(image_path: str) -> Dict[str, Dict[str, Any]]:
             # Extract detection info
             x_min, y_min, x_max, y_max = map(int, box.xyxy[0])
             class_id = int(box.cls)
-            class_name = results.names[class_id]  
+            class_name = model.names[class_id]
             yolo_conf = box.conf.item()
 
             # Process image region
@@ -42,20 +42,36 @@ def detect_and_recognize(image_path: str) -> Dict[str, Dict[str, Any]]:
             # Update output structure
             if class_name not in output:
                 output[class_name] = {
-                    "yolo_confs": [],
-                    "ocr_confs": [],
-                    "ocr_texts": []
+                    "text": "",
+                    "conf": 0
                 }
 
-            output[class_name]["yolo_confs"].append(yolo_conf)
-            output[class_name]["ocr_confs"].extend(ocr_confs)
-            output[class_name]["ocr_texts"].extend(ocr_texts)
+            if ocr_texts:
+                output[class_name]["text"] = " ".join(ocr_texts)
+                output[class_name]["conf"] = sum(ocr_confs) / len(ocr_confs)
 
     return output
 
+# Predefined test values with expected YOLO classes
+TEST_VALUES = {
+    "test1": {"kv", "TimeLeft"},
+    "test2": {"res", "temp"},
+    "test3": {"res"},
+    "test4": {"Volt"},
+    "test5": {"qcValue"},
+    "test6": {"qValue"},
+    "test7": {"temp"},
+}
+
 @app.post("/test/")
-async def test(file: UploadFile = File(...)):
+async def test(test_name: str = Form(...), file: UploadFile = File(...)):
     try:
+        if test_name not in TEST_VALUES:
+            return JSONResponse(content={
+                "error": "Invalid test name provided",
+                "valid_tests": list(TEST_VALUES.keys())
+            }, status_code=400)
+
         # Save uploaded image temporarily
         image_path = f"temp_{file.filename}"
         with open(image_path, "wb") as f:
@@ -68,23 +84,25 @@ async def test(file: UploadFile = File(...)):
         # Cleanup temp file
         os.remove(image_path)
 
-        # Prepare detailed results
-        detailed_results = {}
-        for class_name, data in detected_data.items():
-            combined_conf = sum(data["ocr_confs"]) / len(data["ocr_confs"]) if data["ocr_confs"] else 0
-            detailed_results[class_name] = {
-                "ocr_texts": data["ocr_texts"],
-                "combined_conf": combined_conf
-            }
+        expected_classes = TEST_VALUES[test_name]
 
-        return JSONResponse(content={
-            "extracted_classes": list(extracted_classes),
-            "detailed_results": detailed_results
-        })
+        combined_conf = sum(data["conf"] for data in detected_data.values()) / len(detected_data) if detected_data else 0
+
+        if extracted_classes == expected_classes:
+            return JSONResponse(content={
+                "results": detected_data,
+                "combined_conf": combined_conf
+            })
+        else:
+            return JSONResponse(content={
+                "message": "Extracted classes do not match expected classes",
+                "expected_classes": list(expected_classes),
+                "extracted_classes": list(extracted_classes),
+            }, status_code=400)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 def health_check():
-    return {"status": "healthy", "version": "1.0.3"}
+    return {"status": "healthy", "version": "11"}
