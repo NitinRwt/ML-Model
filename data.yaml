@@ -1,5 +1,0 @@
-train: dataset\train\images
-val: dataset\valid\images
-
-nc: 11
-names: ['0', '1', '2', '3', '4', '5', '6', '66', '7', '8', '9']
