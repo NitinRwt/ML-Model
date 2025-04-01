@@ -1,5 +1,0 @@
-train: dataset\train\images
-val: dataset\train\images
-
-nc: 2
-names: ['needle','numbers']
