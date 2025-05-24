@@ -1,6 +1,13 @@
 xsen
 detect
 __pycache__
-testimg
-dataset
+test_images
 runs
+images
+res_temp
+dataset
+extracted_frames
+cropped_images
+dataset.zip
+dataset_synthetic
+new_data
