@@ -9,3 +9,5 @@ dataset
 extracted_frames
 cropped_images
 dataset.zip
+dataset_synthetic
+new_data
