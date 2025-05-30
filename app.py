@@ -9,8 +9,6 @@ import tempfile
 import tensorflow as tf
 import easyocr
 from new_apparatus import draw_obb
-from res_temp_N2N import TwoStageOCR, order_points
-from Cnn_res import YoloCNN_OCR  
 from Remaining_test import draw_obb  
 from analog import crop_region, calculate_meter_reading, get_center_point
 
@@ -30,14 +28,14 @@ reader = easyocr.Reader(['en'])
 def process_res_temp(file_bytes):
     try:
         # Load models (do this once globally in production)
-        box_model = 'Models/res_temp_box.pt'
-        temp_yolo_model = 'Models/temp_detection.pt'
+        box_model = 'Models/res_temp_box_v2.pt'
+        temp_yolo_model = 'Models/temp_detection2.pt'
         temp_cnn_model  = 'Models/lenet7seg.h5'
-        res_yolo_model = 'Models/res_detect.pt'
-        res_cnn_model  = 'Models/digit_cnn_model_1.2.h5'
+        res_yolo_model = 'Models/res_detect2.pt'
+        res_cnn_model  = 'Models/lenet_res_v2.h5'
 
         from res_temp_N2N import TwoStageOCR, order_points
-        from Cnn_res import YoloCNN_OCR
+        from Lenet_res import YoloLeNetOCR
 
         temp_ocr = TwoStageOCR(
             box_model_path=box_model,
@@ -46,10 +44,10 @@ def process_res_temp(file_bytes):
             image_size=(28,28),
             conf_threshold=0.3
         )
-        res_ocr = YoloCNN_OCR(
+        res_ocr = YoloLeNetOCR(
             yolo_model_path=res_yolo_model,
-            cnn_model_path=res_cnn_model,
-            image_size=(128,128),
+            lenet_model_path=res_cnn_model, 
+            image_size=(28,28),
             conf_threshold=0.5
         )
 
@@ -67,7 +65,7 @@ def process_res_temp(file_bytes):
         polys = res_panels.obb.xyxyxyxy.cpu().numpy()
         confs = res_panels.obb.conf.cpu().numpy()
         class_ids = res_panels.obb.cls.cpu().numpy().astype(int)
-        class_names = box_detector.model.names  # Should be ['res', 'temp']
+        class_names = box_detector.model.names  
 
         results = []
         confidence_scores = []
@@ -113,7 +111,8 @@ def process_res_temp(file_bytes):
                     cv2.imwrite(tmp.name, crop)
                     tmp_path = tmp.name
                 raw = res_ocr.ocr_image(tmp_path)
-                os.remove(tmp_path)  # Clean up temp file
+                os.remove(tmp_path) 
+                raw = raw.replace("dot", ".") # Clean up temp file
                 results.append({
                     "keyName": "Resistance",
                     "keyValue": raw,

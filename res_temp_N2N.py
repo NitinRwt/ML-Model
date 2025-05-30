@@ -148,7 +148,7 @@ if __name__ == '__main__':
     temp_yolo_model = 'Models/temp_detection.pt'
     temp_cnn_model  = 'Models/lenet7seg.h5'
     res_yolo_model = 'Models/res_detect.pt'
-    res_cnn_model  = 'Models/digit_cnn_model_1.2.h5'
+    res_cnn_model  = 'Models/lenet_res.h5'
 
     # Initialize both OCRs
     temp_ocr = TwoStageOCR(
@@ -158,15 +158,15 @@ if __name__ == '__main__':
         image_size=(28,28),
         conf_threshold=0.3
     )
-    from Cnn_res import YoloCNN_OCR  # Make sure this import works or move the class to a shared file
-    res_ocr = YoloCNN_OCR(
+    from Lenet_res import YoloLeNetOCR 
+    res_ocr = YoloLeNetOCR(
         yolo_model_path=res_yolo_model,
-        cnn_model_path=res_cnn_model,
-        image_size=(128,128),
+        lenet_model_path=res_cnn_model, 
+        image_size=(28,28),
         conf_threshold=0.5
     )
 
-    input_dir = 'test_images/cd_cr/temp'
+    input_dir = 'test_images/cd_cr/resistance'
     for fname in os.listdir(input_dir):
         if not fname.lower().endswith(('.png','.jpg','.jpeg')):
             continue
@@ -183,7 +183,7 @@ if __name__ == '__main__':
             print(f"{fname} -> No panels detected")
             continue
 
-        polys = res_panels.obb.xyxyxyxy.cpu().numpy()
+        polys = res_panels.obb.xyxyxyxy.cpu().numpy()   
         confs = res_panels.obb.conf.cpu().numpy()
         class_ids = res_panels.obb.cls.cpu().numpy().astype(int)
         class_names = box_detector.model.names  # Should be ['res', 'temp']
@@ -212,11 +212,13 @@ if __name__ == '__main__':
             class_name = class_names[cls_id]
             if class_name == 'temp':
                 raw = temp_ocr.ocr_panel(crop)
-                formatted = raw
-                if len(raw) > 2:
-                    formatted = raw[:2] + '.' + raw[2:]
-                if formatted.endswith('C'):
-                    formatted = f"{formatted[:-1]}°C"
+                # Remove 'C' if present
+                temp_digits = raw.replace('C', '')
+                # Only format if at least 2 digits
+                if len(temp_digits) > 1:
+                    formatted = temp_digits[:-1] + '.' + temp_digits[-1] + '°C'
+                else:
+                    formatted = temp_digits + '°C'
                 print(f"{fname} [TEMP] -> {formatted}")
             elif class_name == 'res':
                 # Save crop to a temporary file
@@ -225,5 +227,6 @@ if __name__ == '__main__':
                     tmp_path = tmp.name
                 raw = res_ocr.ocr_image(tmp_path)
                 os.remove(tmp_path)  # Clean up temp file
+                raw = raw.replace("dot", ".")  
                 print(f"{fname} [RES] -> {raw}")
 
